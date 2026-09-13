@@ -1,0 +1,34 @@
+[project]
+name = "libtune"
+
+[fetch-content.cereal]
+git = "https://github.com/USCiLab/cereal.git"
+tag = "v1.3.2"
+
+[fetch-content.eve]
+git = "https://github.com/jfalcou/eve.git"
+tag = "v2023.02.15"
+
+[fetch-content.r123]
+git = "https://github.com/DEShawResearch/random123.git"
+tag = "v1.14.0"
+
+[options]
+JUST_INSTALL_CEREAL = true
+EVE_BUILD_TEST = false
+EVE_BUILD_BENCHMARKS = false
+EVE_BUILD_DOCUMENTATION = false
+
+[variables]
+CMAKE_EXPORT_COMPILE_COMMANDS = true
+
+[target.libtune_r123]
+type = "interface"
+include-directories = ["${r123_SOURCE_DIR}/include"]
+
+[target.libtune]
+type = "interface"
+include-directories = ["include"]
+link-libraries = ["cereal::cereal", "eve::eve", "libtune_r123"]
+compile-features = ["cxx_std_23"]
+alias = "libtune::libtune"

@@ -1,0 +1,13 @@
+BasedOnStyle: Google
+ColumnLimit: 100
+
+BinPackArguments: false
+BinPackParameters: false
+
+AlignAfterOpenBracket: BlockIndent
+
+IndentWidth: 4
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+AccessModifierOffset: 0
+IndentAccessModifiers: false

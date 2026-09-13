@@ -1,0 +1,12 @@
+# cmkr
+build*/
+cmake-build*/
+CMakerLists.txt
+CMakeLists.txt.user
+CMakeUserPresets.json
+
+# me
+.clangd
+compile_flags.txt
+design.txt
+tests*/
