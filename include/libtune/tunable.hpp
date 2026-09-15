@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cereal/archives/binary.hpp>
+#include <cereal/types/vector.hpp>
 #include <filesystem>
 #include <fstream>
 #include <ranges>
@@ -17,20 +18,22 @@ class Tunable {
         grad_.resize(tunables.size());
     }
 
-    Tunable(std::span<int> tunables, float smoothing = 1.0f) {
+    Tunable(std::span<int> tunables, float smoothing = 1.0f) : smoothing_(smoothing) {
         data_.assign_range(std::views::transform(tunables, [](int x) {
             return static_cast<float>(x);
         }));
         grad_.resize(tunables.size());
     }
 
-    auto numel() -> int { return data_.size(); }
-    auto zero_grad() -> void { std::ranges::fill(grad_, static_cast<float>(0.0)); }
-    auto data() -> std::vector<float>& { return data_; }
-    auto grad() -> std::vector<float>& { return grad_; }
-    auto update(std::span<float>& vals) -> void { data_.assign_range(vals); }
+    constexpr auto numel() noexcept -> int { return data_.size(); }
+    constexpr auto zero_grad() noexcept -> void {
+        std::ranges::fill(grad_, static_cast<float>(0.0));
+    }
+    constexpr auto data() noexcept -> std::vector<float>& { return data_; }
+    constexpr auto grad() noexcept -> std::vector<float>& { return grad_; }
+    constexpr auto update(std::span<float>& vals) noexcept -> void { data_.assign_range(vals); }
 
-    auto serialize(const std::string& str) -> void {
+    constexpr auto serialize(const std::string& str) -> void {
         auto path = std::filesystem::path(str);
         path.replace_extension(".bin");
         auto out = std::ofstream(path);

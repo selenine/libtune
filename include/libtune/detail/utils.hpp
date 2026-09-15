@@ -4,7 +4,7 @@
 
 namespace tune::detail {
 template <std::size_t N, typename F>
-constexpr inline void unroll(F&& func) {
+constexpr inline auto unroll(F&& func) -> void {
     [&]<std::size_t... Is>(std::index_sequence<Is...>) {
         (func.template operator()<Is>(), ...);
     }(std::make_index_sequence<N>{});

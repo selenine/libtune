@@ -11,10 +11,10 @@
 
 namespace tune {
 namespace detail {
-struct SGDState {
+struct AdamState {
     template <typename... T>
         requires(std::is_same_v<T, Tunable> && ...)
-    SGDState(T&... tunables) {
+    AdamState(T&... tunables) {
         ((momentum_.emplace_back(std::vector<float>(tunables.numel())),
           velocity_.emplace_back(std::vector<float>(tunables.numel()))),
          ...);
@@ -27,34 +27,35 @@ struct SGDState {
 }  // namespace detail
 
 namespace optim {
-struct SGDOptions {
-    float lr = 0.01;
-    float beta1 = 0.9;
-    float beta2 = 0.4;
-    float eps = 1e-7;
-    float lambda = 0.0;
+struct AdamOptions {
+    float lr = 0.01f;
+    float beta1 = 0.9f;
+    float beta2 = 0.4f;
+    float eps = 1e-7f;
+    float lambda = 0.0f;
 
-    bool nesterov = true;
     bool minimize = false;
     bool cautious = false;
+    bool adabelief = false;
 };
 
-class SGD {
+class Adam {
     public:
     template <typename... T>
         requires(std::is_same_v<T, Tunable> && ...)
-    SGD(SGDOptions options, T&... tunables) : options_(options), state_(tunables...) {
+    Adam(const AdamOptions& options, T&... tunables) : options_(options), state_(tunables...) {
         (tunables_.emplace_back(tunables), ...);
     }
 
-    auto zero_grad() -> void {
+    constexpr auto zero_grad() noexcept -> void {
         for (auto& tnbl : tunables_) {
             auto t = tnbl.get();
             t.zero_grad();
         }
     }
 
-    auto step() -> void {
+    // TODO: also noexcept this
+    constexpr auto step() -> void {
         for (auto&& [index, tnbl] : std::views::enumerate(tunables_)) {
             auto& t = tnbl.get();
             auto& moms = state_.momentum_[index];
@@ -73,13 +74,39 @@ class SGD {
                     constexpr auto OFFSET = idx * VEC_SIZE;
 
                     auto data = eve::wide<float>(&datas[i * CHUNK_SIZE + OFFSET]);
-                    auto grad = [&]() -> eve::wide<float> {
+                    auto grad = [&]() noexcept -> eve::wide<float> {
                         auto grad = eve::wide<float>(&grads[i * CHUNK_SIZE + OFFSET]);
                         if (options_.minimize) {
                             grad = -grad;
                         }
 
-                        // TODO:The rest of this
+                        auto beta1 = eve::wide<float>(options_.beta1);
+                        auto beta2 = eve::wide<float>(options_.beta2);
+
+                        auto mom = eve::wide<float>(&moms[i * CHUNK_SIZE + OFFSET]);
+                        mom = eve::fma(beta1, mom, grad);
+                        mom = eve::fnma(beta1, grad, mom);
+                        mom /= eve::wide<float>(std::pow((1 - options_.beta1), state_.step));
+
+                        auto vel = eve::wide<float>(&vels[i * CHUNK_SIZE + OFFSET]);
+                        auto sqr = (options_.adabelief) ? (grad - mom) * (grad - mom) +
+                                                              eve::wide<float>(options_.eps)
+                                                        : grad * grad;
+
+                        vel = eve::fma(beta2, vel, sqr);
+                        vel = eve::fnma(beta2, sqr, vel);
+                        vel /= eve::wide<float>(std::pow((1 - options_.beta2), state_.step));
+
+                        auto upd = mom / (eve::sqrt(vel) + eve::wide<float>(options_.eps));
+                        if (options_.cautious) {
+                            auto grad_sign = (grad > 0);
+                            auto upd_sign = (upd > 0);
+                            auto mask = (grad_sign == upd_sign);
+                            upd = eve::if_else(mask, upd, eve::zero);
+                        }
+
+                        eve::store(mom, &moms[i * CHUNK_SIZE + OFFSET]);
+                        eve::store(vel, &vels[i * CHUNK_SIZE + OFFSET]);
 
                         return grad;
                     }();
@@ -95,14 +122,16 @@ class SGD {
 
             for (const auto& i : std::views::iota(0, REM)) {
                 const auto idx = i + BLOCKED;
-                auto grad = [&]() -> float {
+                auto grad = [&]() noexcept -> float {
                     auto grad = grads[idx];
                     if (options_.minimize) {
                         grad = -grad;
                     }
 
                     auto mom = options_.beta1 * moms[idx] + (1 - options_.beta1) * grad;
-                    auto vel = options_.beta2 * vels[idx] + (1 - options_.beta2) * grad * grad;
+                    auto sqr = (options_.adabelief) ? (grad - mom) * (grad - mom) + options_.eps
+                                                    : grad * grad;
+                    auto vel = options_.beta2 * vels[idx] + (1 - options_.beta2) * sqr;
 
                     mom /= (1 - std::pow(options_.beta1, state_.step));
                     vel /= (1 - std::pow(options_.beta2, state_.step));
@@ -113,6 +142,9 @@ class SGD {
                         auto upd_sign = (upd > 0);
                         upd = (grad_sign == upd_sign) ? upd : 0;
                     }
+
+                    moms[idx] = mom;
+                    vels[idx] = vel;
 
                     return upd;
                 }();
@@ -127,8 +159,8 @@ class SGD {
     }
 
     private:
-    SGDOptions options_;
-    detail::SGDState state_;
+    AdamOptions options_;
+    detail::AdamState state_;
     std::vector<std::reference_wrapper<Tunable>> tunables_;
 };
 }  // namespace optim

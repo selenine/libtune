@@ -10,10 +10,10 @@
 
 namespace tune {
 namespace detail {
-struct SGDState {
+struct LionState {
     template <typename... T>
         requires(std::is_same_v<T, Tunable> && ...)
-    SGDState(T&... tunables) {
+    LionState(T&... tunables) {
         (momentum_.emplace_back(std::vector<float>(tunables.numel())), ...);
     }
 
@@ -23,22 +23,22 @@ struct SGDState {
 }  // namespace detail
 
 namespace optim {
-struct SGDOptions {
+struct LionOptions {
     float lr = 0.01f;
-    float momentum = 0.9f;
+    float beta1 = 0.9f;
+    float beta2 = 0.99f;
     float lambda = 0.0f;
 
-    bool nesterov = true;
     bool minimize = false;
     bool cautious = false;
-    bool take_sign = false;
+    bool adabelief = false;
 };
 
-class SGD {
+class Lion {
     public:
     template <typename... T>
         requires(std::is_same_v<T, Tunable> && ...)
-    SGD(const SGDOptions& options, T&... tunables) : options_(options), state_(tunables...) {
+    Lion(const LionOptions& options, T&... tunables) : options_(options), state_(tunables...) {
         (tunables_.emplace_back(tunables), ...);
     }
 
@@ -49,7 +49,7 @@ class SGD {
         }
     }
 
-    // TODO: noexcept this
+    // TODO: also also noexcept this
     constexpr auto step() -> void {
         for (auto&& [index, tnbl] : std::views::enumerate(tunables_)) {
             auto& t = tnbl.get();
@@ -68,34 +68,30 @@ class SGD {
                     constexpr auto OFFSET = idx * VEC_SIZE;
 
                     auto data = eve::wide<float>(&datas[i * CHUNK_SIZE + OFFSET]);
-                    auto grad = [&]() -> eve::wide<float> {
+                    auto grad = [&]() noexcept -> eve::wide<float> {
                         auto grad = eve::wide<float>(&grads[i * CHUNK_SIZE + OFFSET]);
                         if (options_.minimize) {
                             grad = -grad;
                         }
 
-                        if (options_.momentum) {
-                            auto mom = eve::wide<float>(&moms[i * CHUNK_SIZE + OFFSET]);
-                            mom = eve::fma(eve::wide<float>(options_.momentum), mom, grad);
-                            eve::store(mom, &moms[i * CHUNK_SIZE + OFFSET]);
+                        auto beta1 = eve::wide<float>(options_.beta1);
+                        auto beta2 = eve::wide<float>(options_.beta2);
 
-                            auto upd =
-                                (options_.nesterov)
-                                    ? eve::fma(eve::wide<float>(options_.momentum), mom, grad)
-                                    : mom;
+                        auto mom = eve::wide<float>(&moms[i * CHUNK_SIZE + OFFSET]);
+                        auto pre = eve::fma(beta1, mom, grad);
+                        pre = eve::fnma(beta1, grad, pre);
 
-                            if (options_.cautious) {
-                                auto grad_sign = eve::sign(grad);
-                                auto upd_sign = eve::sign(upd);
-                                auto mask = (grad_sign == upd_sign);
-                                upd = eve::if_else(mask, upd, eve::zero);
-                            }
-                            grad = upd;
+                        auto upd = eve::sign(pre);
+                        if (options_.cautious) {
+                            auto grad_sign = (grad > 0);
+                            auto upd_sign = (upd > 0);
+                            auto mask = (grad_sign == upd_sign);
+                            upd = eve::if_else(mask, upd, eve::zero);
                         }
 
-                        if (options_.take_sign) {
-                            grad = eve::sign(grad);
-                        }
+                        mom = eve::fma(beta2, mom, grad);
+                        mom = eve::fnma(beta2, grad, mom);
+                        eve::store(mom, &moms[i * CHUNK_SIZE + OFFSET]);
 
                         return grad;
                     }();
@@ -111,30 +107,24 @@ class SGD {
 
             for (const auto& i : std::views::iota(0, REM)) {
                 const auto idx = i + BLOCKED;
-                auto grad = [&]() -> float {
+                auto grad = [&]() noexcept -> float {
                     auto grad = grads[idx];
                     if (options_.minimize) {
                         grad = -grad;
                     }
 
-                    if (options_.momentum) {
-                        auto mom = moms[idx] * options_.momentum + grad;
-                        moms[idx] = mom;
-
-                        auto upd = (options_.nesterov) ? mom * options_.momentum + grad : mom;
-                        if (options_.cautious) {
-                            auto grad_sign = (grad > 0);
-                            auto upd_sign = (upd > 0);
-                            upd = (grad_sign == upd_sign) ? upd : 0;
-                        }
-                        grad = upd;
+                    auto pre = options_.beta1 * moms[idx] + (1 - options_.beta1) * grad;
+                    auto upd = (pre > 0) ? 1 : (pre < 0) ? -1 : 0;
+                    if (options_.cautious) {
+                        auto grad_sign = (grad > 0);
+                        auto upd_sign = (upd > 0);
+                        upd = (grad_sign == upd_sign) ? upd : 0;
                     }
 
-                    if (options_.take_sign) {
-                        grad = (grad > 0) ? 1 : ((grad < 0) ? -1 : 0);
-                    }
+                    auto mom = options_.beta2 * moms[idx] + (1 - options_.beta2) * grad;
+                    moms[idx] = mom;
 
-                    return grad;
+                    return upd;
                 }();
 
                 auto data = datas[idx];
@@ -147,8 +137,8 @@ class SGD {
     }
 
     private:
-    SGDOptions options_;
-    detail::SGDState state_;
+    LionOptions options_;
+    detail::LionState state_;
     std::vector<std::reference_wrapper<Tunable>> tunables_;
 };
 }  // namespace optim
