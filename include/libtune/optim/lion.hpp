@@ -78,10 +78,10 @@ class Lion {
                         auto beta2 = eve::wide<float>(options_.beta2);
 
                         auto mom = eve::wide<float>(&moms[i * CHUNK_SIZE + OFFSET]);
-                        auto pre = eve::fma(beta1, mom, grad);
-                        pre = eve::fnma(beta1, grad, pre);
+                        auto val = eve::fma(beta1, mom, grad);
+                        val = eve::fnma(beta1, grad, val);
 
-                        auto upd = eve::sign(pre);
+                        auto upd = eve::sign(val);
                         if (options_.cautious) {
                             auto grad_sign = (grad > 0);
                             auto upd_sign = (upd > 0);
@@ -113,8 +113,8 @@ class Lion {
                         grad = -grad;
                     }
 
-                    auto pre = options_.beta1 * moms[idx] + (1 - options_.beta1) * grad;
-                    auto upd = (pre > 0) ? 1 : (pre < 0) ? -1 : 0;
+                    auto val = options_.beta1 * moms[idx] + (1 - options_.beta1) * grad;
+                    auto upd = (val > 0) ? 1 : (val < 0) ? -1 : 0;
                     if (options_.cautious) {
                         auto grad_sign = (grad > 0);
                         auto upd_sign = (upd > 0);
